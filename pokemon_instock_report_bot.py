@@ -2,7 +2,6 @@ import os
 import requests
 from bs4 import BeautifulSoup
 
-# We’ll read either a dedicated secret or fall back to your existing one:
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL_IN_STOCK") \
                    or os.environ.get("DISCORD_WEBHOOK_URL")
 
@@ -30,7 +29,7 @@ RETAILERS = [
     },
     {
         "name": "Pokemon Center",
-        "url": "https://www.pokemoncenter.com/category/tcg-cards",
+        "url": "https://www.pokemoncenter.com/category/new-releases?category=S0105-0000-0000",
         "product_container_selector": "li.product-tile",
         "product_name_selector": "a.name",
         "out_of_stock_selector": "span.sold-out"
@@ -42,7 +41,6 @@ def send_discord_report(report):
         print("No webhook URL set")
         return
 
-    # build a single embed
     embed = {
         "title": "📦 Pokémon TCG Current In-Stock Report",
         "description": "Here’s what’s in stock right now:",
@@ -53,7 +51,7 @@ def send_discord_report(report):
     for retailer, items in report.items():
         if items:
             embed["fields"].append({
-                "name": f"{retailer}",
+                "name": retailer,
                 "value": "\n".join(f"- {item}" for item in items),
                 "inline": False
             })
@@ -61,9 +59,9 @@ def send_discord_report(report):
     if not embed["fields"]:
         embed["description"] = "🚫 No Pokémon cards currently in stock at any retailer."
 
-    payload = {"embeds": [embed]}
+    print("DEBUG: sending payload:", embed)   # ←–– show what we’ll send
     try:
-        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]})
     except Exception as e:
         print("Failed to send report to Discord:", e)
 
@@ -71,25 +69,46 @@ def scrape_and_build_report():
     report = {}
     headers = {'User-Agent': 'Mozilla/5.0'}
     for r in RETAILERS:
-        print(f"Checking {r['name']}...", end=" ")
+        print(f"\n--- {r['name']} ---")
         try:
-            resp = requests.get(r['url'], headers=headers, timeout=20)
+            API_KEY = os.environ["SCRAPER_API_KEY"]
+target_url = r["url"]
+proxy_url = f"https://api.scraperapi.com?api_key={API_KEY}&url={quote_plus(target_url)}"
+resp = requests.get(proxy_url, timeout=30)
+
             resp.raise_for_status()
             soup = BeautifulSoup(resp.content, "html.parser")
-            products = soup.select(r["product_container_selector"])
-            in_stock = []
-            for prod in products:
-                name_el = prod.select_one(r["product_name_selector"])
-                if not name_el: 
-                    continue
-                name = name_el.text.strip()
-                if not prod.select_one(r["out_of_stock_selector"]):
-                    in_stock.append(name)
-            report[r["name"]] = in_stock
-            print(f"found {len(in_stock)} in-stock")
         except Exception as e:
-            print("ERROR:", e)
+            print("  ERROR fetching page:", e)
             report[r["name"]] = []
+            continue
+
+        # 1️⃣ find containers
+        products = soup.select(r["product_container_selector"])
+        print(f"  Found {len(products)} containers using “{r['product_container_selector']}”")
+
+        # 2️⃣ if none, show the first 3 lines of raw HTML to help pick a new selector
+        if len(products) == 0:
+            snippet = "".join(str(soup) .splitlines(True)[:20])
+            print("  Page snippet:")
+            print(snippet)
+            report[r["name"]] = []
+            continue
+
+        # 3️⃣ extract names & stock status
+        in_stock = []
+        for prod in products:
+            name_el = prod.select_one(r["product_name_selector"])
+            if not name_el:
+                continue
+            name = name_el.text.strip()
+            if not prod.select_one(r["out_of_stock_selector"]):
+                in_stock.append(name)
+
+        print(f"  → {len(in_stock)} items appear in stock")
+        # save
+        report[r["name"]] = in_stock
+
     return report
 
 if __name__ == "__main__":
