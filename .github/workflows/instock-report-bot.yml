@@ -1,0 +1,30 @@
+name: Run In-Stock Summary Bot
+
+on:
+  schedule:
+    - cron: '0 * * * *'      # every hour on the hour
+  workflow_dispatch:        # manual trigger
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run in-stock report
+        env:
+          DISCORD_WEBHOOK_URL_IN_STOCK: ${{ secrets.DISCORD_WEBHOOK_URL_IN_STOCK }}
+          # fallback is DISCORD_WEBHOOK_URL if you want to reuse the other
+          DISCORD_WEBHOOK_URL:       ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 pokemon_instock_report_bot.py
